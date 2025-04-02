@@ -5,6 +5,10 @@ using System.Security.Claims;
 using System.Text;
 using PruebaHP.Model;
 using System.Text.RegularExpressions;
+using Microsoft.Data.SqlClient;
+using System.Data;
+using Microsoft.EntityFrameworkCore;
+using PruebaHP.Data;
 
 namespace PruebaHP.Controllers
 {
@@ -12,65 +16,72 @@ namespace PruebaHP.Controllers
     [ApiController]
     public class AuthController : ControllerBase
     {
+        private readonly PersonajeContext _context;
         private readonly IConfiguration _configuration;
-        private const string AllowedDomain = "@alumnouninter.mx";
 
-        public AuthController(IConfiguration configuration)
+        public AuthController(PersonajeContext context, IConfiguration configuration)
         {
+            _context = context;
             _configuration = configuration;
         }
 
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginRequest request)
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
-            if (!IsValidEmail(request.Correo))
+            if (request == null || string.IsNullOrEmpty(request.NombreUsuario) || string.IsNullOrEmpty(request.Password))
             {
-                return BadRequest(new { message = "El correo electrónico no es válido o no pertenece al dominio permitido." });
+                return BadRequest(new { message = "Usuario y contraseña son obligatorios." });
             }
 
-            // 🔐 Simulación de autenticación (puedes validar en una DB)
-            if (request.Password == "123")
+            // 🔹 Obtener la conexión de Entity Framework
+            using (var connection = (SqlConnection)_context.Database.GetDbConnection())
             {
-                var secretKey = _configuration["JwtSettings:SecretKey"];
-                var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secretKey));
-                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+                await connection.OpenAsync();
 
-                var claims = new[]
+                using (var cmd = new SqlCommand("ValidarUsuario", connection))
                 {
-                new Claim(ClaimTypes.Name, request.Correo),
-                new Claim(ClaimTypes.Role, "User")
-            };
+                    cmd.CommandType = CommandType.StoredProcedure;
+                    cmd.Parameters.AddWithValue("@NombreUsuario", request.NombreUsuario);
+                    cmd.Parameters.AddWithValue("@Password", request.Password);
 
-                var token = new JwtSecurityToken(
-                    claims: claims,
-                    expires: DateTime.UtcNow.AddHours(1),
-                    signingCredentials: creds
-                );
+                    int resultado = Convert.ToInt32(await cmd.ExecuteScalarAsync());
 
-                var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+                    if (resultado == 1)
+                    {
+                        var secretKey = _configuration["JwtSettings:SecretKey"];
+                        if (string.IsNullOrEmpty(secretKey))
+                        {
+                            return StatusCode(500, new { message = "Error en la configuración del token." });
+                        }
 
-                return Ok(new { token = tokenString });
+                        var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secretKey));
+                        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+                        var claims = new[]
+                        {
+                            new Claim(ClaimTypes.Name, request.NombreUsuario),
+                            new Claim(ClaimTypes.Role, "User")
+                        };
+
+                        var token = new JwtSecurityToken(
+                            claims: claims,
+                            expires: DateTime.UtcNow.AddHours(1),
+                            signingCredentials: creds
+                        );
+
+                        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+                        return Ok(new { token = tokenString });
+                    }
+                }
             }
 
-            return Unauthorized();
+            return Unauthorized(new { message = "Usuario o contraseña incorrectos." });
         }
+    }
 
-        private bool IsValidEmail(string? email)
-        {
-            if (string.IsNullOrEmpty(email)) return false;
-
-            // Expresión regular para validar formato de correo
-            string emailPattern = @"^[^@\s]+@[^@\s]+\.[^@\s]+$";
-            if (!Regex.IsMatch(email, emailPattern)) return false;
-
-            // Verificar que el correo pertenezca al dominio permitido
-            return email.EndsWith(AllowedDomain, StringComparison.OrdinalIgnoreCase);
-        }
-
-        public class LoginRequest
-        {
-            public string? Correo { get; set; }
-            public string? Password { get; set; }
-        }
+    public class LoginRequest
+    {
+        public string? NombreUsuario { get; set; }
+        public string? Password { get; set; }
     }
 }
