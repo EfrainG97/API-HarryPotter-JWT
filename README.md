@@ -1,4 +1,4 @@
-# API Mágica de Hogwarts ✨🧙‍♂️
+# API de Harry Potter ✨🧙‍♂️
 
 Una API RESTful construida con .NET Core 8 y SQL Server que permite gestionar personajes del universo de Harry Potter. Incluye autenticación mediante JWT para asegurar el acceso, ideal para ser consumida desde aplicaciones de escritorio como WinForms.
 
